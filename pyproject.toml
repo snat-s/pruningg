@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "pruningg"
+version = "0.1.0"
+description = ""
+authors = ["ciaran-regan-ie <ciaranregan123@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+transformers = "^4.44.2"
+trl = "^0.9.6"
+torch = "^2.4.0"
+python-dotenv = "^1.0.1"
+peft = "^0.12.0"
+datasets = "^2.21.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
