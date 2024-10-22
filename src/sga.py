@@ -1,25 +1,21 @@
 """
-Simple Genetic Algorithm (SGA)
+    Simple Genetic Algorithm (SGA)
 """
-
 import random
 import matplotlib.pyplot as plt
 from typing import List, Tuple
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from datasets import load_dataset
-from huggingface_hub import login
 from tqdm import tqdm
 import os
 import copy
 import gc
 import json
 
-#login(token=os.environ["HF_AUTH_TOKEN"])
-
-# Representation: Bit-strings
+# Modify to bias towards the percentage of initial layers you want, by default it's 70%
 def create_individual(gene_length: int) -> List[int]:
-    return [random.randint(0, 1) for _ in range(gene_length)]
+    return [1 if random.random() < 0.7 else 0 for _ in range(gene_length)]
 
 def create_population(population_size: int, gene_length: int) -> List[List[int]]:
     return [create_individual(gene_length) for _ in range(population_size)]
@@ -68,7 +64,7 @@ def evaluate_model(model, tokenizer, task="mmlu", subset="high_school_computer_s
                     "Example 1: What is the capital of France?\nA. Berlin\nB. Madrid\nC. Paris\nD. Rome\nAnswer: C\n\n"
                     "Example 2: What is 2 + 2?\nA. 3\nB. 4\nC. 5\nD. 6\nAnswer: B\n\n"
         )
-        prompt = few_shot_prompt + question + "\n"
+        prompt = question + "\n"
         for i, choice in enumerate(choices):
             prompt += f"{chr(65+i)}. {choice}\n"
         prompt += "Answer:"
@@ -79,15 +75,14 @@ def evaluate_model(model, tokenizer, task="mmlu", subset="high_school_computer_s
         inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
         with torch.no_grad():
             outputs = model.generate(**inputs, max_new_tokens=2)
-        # TODO: Decode the answers and parse it, because only 2 tokens is really small.
         generated_answers = tokenizer.batch_decode(outputs, skip_special_tokens=True)
         return [ans.strip()[-1] for ans in generated_answers]
 
     all_predictions = []
     all_labels = []
 
-    for i in range(0, len(dataset), 1):
-        batch = dataset[i:i+1]
+    for i in range(0, len(dataset), 4):
+        batch = dataset[i:i+4]
         predictions = evaluate_batch(batch)
         all_predictions.extend(predictions)
         all_labels.extend([chr(65 + ans) for ans in batch['answer']])
@@ -112,7 +107,8 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
             pruned_model.to('cuda')
             accuracy = evaluate_model(pruned_model, tokenizer)
             fitnesses.append(accuracy)
-            print(f"Model with {sum(individual)} layers: Accuracy = {accuracy:.4f}")
+            active_layers = sum(individual)
+            print(f"Model with {active_layers}/{gene_length} layers ({active_layers/gene_length*100:.1f}%): Accuracy = {accuracy:.4f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
@@ -142,7 +138,7 @@ def generate_completion(model, tokenizer, prompt, max_new_tokens=50):
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def main():
-    llm_name = "Qwen/Qwen2-0.5B-Instruct" # starting incredibly small because i am gpu poor 
+    llm_name = "Qwen/Qwen2-0.5B-Instruct"
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name, token=os.environ["HF_AUTH_TOKEN"])
@@ -152,6 +148,7 @@ def main():
     model.config.pad_token_id = tokenizer.eos_token_id
 
     num_layers = len(model.model.layers)
+    print(f"Model has {num_layers} layers")
 
     print("Initial model evaluation:")
     initial_accuracy = evaluate_model(model, tokenizer)
@@ -160,8 +157,8 @@ def main():
 
     # Adjust these parameters as needed
     population_size = 20
-    generations = 100
-    mutation_rate = 0.01
+    generations = 50
+    mutation_rate = 0.05
 
     best_gene, best_accuracy, results = genetic_algorithm(
         model=model,
@@ -175,7 +172,7 @@ def main():
     print(f"\nBest solution:")
     print(f"Gene: {best_gene}")
     print(f"Accuracy: {best_accuracy:.4f}")
-    print(f"Layers kept: {sum(best_gene)}/{num_layers}")
+    print(f"Layers kept: {sum(best_gene)}/{num_layers} ({sum(best_gene)/num_layers*100:.1f}%)")
 
     final_model = remove_layers(model, best_gene)
     final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer)
@@ -185,14 +182,13 @@ def main():
     print("After removing layers:")
     print(generate_completion(final_model.to('cuda'), tokenizer, prompt))
 
-
-    # ploting
+    # plotting
     generations = [r["generation"] for r in results]
     accuracies = [r["best_accuracy"] for r in results]
 
     plt.figure(figsize=(10, 6))
     plt.plot(generations, accuracies)
-    plt.title(f"Best Accuracy Over Generations for {llm_name}")
+    plt.title("Best Accuracy Over Generations")
     plt.xlabel("Generation")
     plt.ylabel("Accuracy")
     plt.grid(True)
