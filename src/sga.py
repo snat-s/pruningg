@@ -12,10 +12,43 @@ import os
 import copy
 import gc
 import json
+#from finetune import finetune
+from transformer import finetune
+from evaluate_model import evaluate_model
 
 # Modify to bias towards the percentage of initial layers you want, by default it's 70%
+#def create_individual(gene_length: int) -> List[int]:
+#    return [1 if random.random() < 0.7 else 0 for _ in range(gene_length)]
 def create_individual(gene_length: int) -> List[int]:
-    return [1 if random.random() < 0.7 else 0 for _ in range(gene_length)]
+    """
+    Creates an individual with bias towards keeping outer layers and being more selective with middle layers.
+    Uses a quadratic function to create a probability distribution that's higher at the edges and lower in the middle.
+    """
+    individual = []
+    
+    # Parameters to control the shape of the probability curve
+    edge_prob = 0.9  # Probability of keeping edge layers
+    middle_prob = 0.4  # Probability of keeping middle layers
+    
+    for i in range(gene_length):
+        # Convert position to range [-1, 1] where 0 is the middle
+        x = (2 * i / (gene_length - 1)) - 1
+        
+        # Quadratic function that's higher at edges (-1 and 1) and lower in middle (0)
+        # p(x) = ax^2 + b where a and b are chosen to match our desired probabilities
+        a = (edge_prob - middle_prob)
+        b = middle_prob
+        prob = a * x * x + b
+        
+        # Create gene based on calculated probability
+        individual.append(1 if random.random() < prob else 0)
+    
+    # Force keeping first and last layers (optional, but often beneficial)
+    if gene_length > 2:  # Only if we have more than 2 layers
+        individual[0] = 1  # Keep first layer
+        individual[-1] = 1  # Keep last layer
+    
+    return individual
 
 def create_population(population_size: int, gene_length: int) -> List[List[int]]:
     return [create_individual(gene_length) for _ in range(population_size)]
@@ -55,50 +88,39 @@ def remove_layers(model, bitmask: List[int]):
         layer.self_attn.layer_idx = i
     return pruned_model
 
-def evaluate_model(model, tokenizer, task="mmlu", subset="high_school_computer_science"):
-    dataset = load_dataset("cais/mmlu", subset, split="test")
+def generate_completion(model, tokenizer, prompt, max_new_tokens=50):
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    def format_example(question, choices):
-        # Few shot for model adherance
-        few_shot_prompt = (
-                    "Example 1: What is the capital of France?\nA. Berlin\nB. Madrid\nC. Paris\nD. Rome\nAnswer: C\n\n"
-                    "Example 2: What is 2 + 2?\nA. 3\nB. 4\nC. 5\nD. 6\nAnswer: B\n\n"
-        )
-        prompt = question + "\n"
-        for i, choice in enumerate(choices):
-            prompt += f"{chr(65+i)}. {choice}\n"
-        prompt += "Answer:"
-        return prompt
-
-    def evaluate_batch(batch):
-        prompts = [format_example(q, c) for q, c in zip(batch['question'], batch['choices'])]
-        inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True).to(model.device)
-        with torch.no_grad():
-            outputs = model.generate(**inputs, max_new_tokens=2)
-        generated_answers = tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        return [ans.strip()[-1] for ans in generated_answers]
-
-    all_predictions = []
-    all_labels = []
-
-    for i in range(0, len(dataset), 4):
-        batch = dataset[i:i+4]
-        predictions = evaluate_batch(batch)
-        all_predictions.extend(predictions)
-        all_labels.extend([chr(65 + ans) for ans in batch['answer']])
-    correct = sum(pred == label for pred, label in zip(all_predictions, all_labels))
-    accuracy = correct / len(all_predictions)
-
-    return accuracy
-
-def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, generations: int, mutation_rate: float) -> Tuple[List[int], float]:
+def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, generations: int, mutation_rate: float, model_name: str, initial_accuracy: float, tasks: List[str]) -> Tuple[List[int], float]:
     population = create_population(population_size, gene_length)
     best_accuracy = 0
     best_individual = None
-    results = []
+    results = {
+        "model_name": model_name,
+        "initial_accuracy": initial_accuracy,
+        tasks: tasks,
+        "final_accuracy": None,  # Will be updated at the end
+        "generations": [],
+        "hyperparameters": {
+            "population_size": population_size,
+            "gene_length": gene_length,
+            "generations": generations,
+            "mutation_rate": mutation_rate
+        }
+    }
 
     for gen in tqdm(range(generations), desc="Generations"):
         fitnesses = []
+        generation_results = {
+            "generation_number": gen + 1,
+            "best_accuracy": None,
+            "best_individual": None,
+            "individuals": []
+        }
+
         for individual in population:
             torch.cuda.empty_cache()
             gc.collect()
@@ -108,11 +130,22 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
             accuracy = evaluate_model(pruned_model, tokenizer)
             fitnesses.append(accuracy)
             active_layers = sum(individual)
+            
+            individual_result = {
+                "active_layers": active_layers,
+                "total_layers": gene_length,
+                "active_percentage": round(active_layers/gene_length * 100, 2),
+                "accuracy": round(accuracy, 4)
+            }
+            generation_results["individuals"].append(individual_result)
+            
             print(f"Model with {active_layers}/{gene_length} layers ({active_layers/gene_length*100:.1f}%): Accuracy = {accuracy:.4f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 best_individual = individual
+                generation_results["best_accuracy"] = round(accuracy, 4)
+                generation_results["best_individual"] = individual
 
             pruned_model.to('cpu')
             del pruned_model
@@ -121,24 +154,40 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
 
         population = create_next_generation(population, fitnesses, mutation_rate)
         print(f"Generation {gen+1}/{generations}: Best accuracy = {best_accuracy:.4f}")
-        results.append({
-            "generation": gen + 1,
-            "best_accuracy": best_accuracy,
-            "best_individual": best_individual
-        })
+        
+        results["generations"].append(generation_results)
+        
+        # Save results with nice formatting after each generation
         with open("ga_results.json", "w") as f:
-            json.dump(results, f)
+            json.dump(results, f, indent=2)
+
+    # Update final accuracy in results
+    results["final_accuracy"] = round(best_accuracy, 4)
+    with open("ga_results.json", "w") as f:
+        json.dump(results, f, indent=2)
 
     return best_individual, best_accuracy, results
 
-def generate_completion(model, tokenizer, prompt, max_new_tokens=50):
-    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        outputs = model.generate(**inputs, max_new_tokens=max_new_tokens)
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+def plot_probability_distribution(gene_length: int):
+    edge_prob = 0.9
+    middle_prob = 0.4
+    x = [(2 * i / (gene_length - 1)) - 1 for i in range(gene_length)]
+    a = (edge_prob - middle_prob)
+    b = middle_prob
+    probs = [a * xi * xi + b for xi in x]
+    
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(gene_length), probs, 'b-')
+    plt.title('Probability Distribution for Layer Selection')
+    plt.xlabel('Layer Index')
+    plt.ylabel('Probability of Keeping Layer')
+    plt.grid(True)
+    plt.savefig('layer_probability_distribution.png')
+    plt.close()
 
 def main():
-    llm_name = "Qwen/Qwen2-0.5B-Instruct"
+    tasks = ["tinyMMLU"]
+    llm_name = "meta-llama/Llama-3.2-1B" #"Qwen/Qwen2-0.5B-Instruct"
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name, token=os.environ["HF_AUTH_TOKEN"])
@@ -149,51 +198,67 @@ def main():
 
     num_layers = len(model.model.layers)
     print(f"Model has {num_layers} layers")
+    plot_probability_distribution(num_layers)
 
-    print("Initial model evaluation:")
-    initial_accuracy = evaluate_model(model, tokenizer)
-    model.to('cpu')
-    print(f"Initial accuracy: {initial_accuracy:.4f}")
+    if os.path.exists("ga_results.json"):
+        print("Found existing results, skipping genetic algorithm...")
+        with open("ga_results.json", "r") as f:
+            results = json.load(f)
 
-    # Adjust these parameters as needed
-    population_size = 20
-    generations = 50
-    mutation_rate = 0.05
+        best_accuracy = float('-inf')
+        best_individual = None
+        best_generation = None
+        for generation_num, generation in enumerate(results['generations']):
+            for individual in generation['individuals']:
+                if individual['accuracy'] > best_accuracy:
+                    best_accuracy = individual['accuracy']
+                    best_individual = individual
+                    best_generation = generation_num
+                    best_binary_config = generation['best_individual']
+        best_gene = best_binary_config
+    else:
+        print("No existing results found, running genetic algorithm...")
+        print("Initial model evaluation:")
+        initial_accuracy = evaluate_model(model, tokenizer, None)
+        model.to('cpu')
+        print(f"Initial accuracy: {initial_accuracy:.4f}")
 
-    best_gene, best_accuracy, results = genetic_algorithm(
-        model=model,
-        tokenizer=tokenizer,
-        population_size=population_size,
-        gene_length=num_layers,
-        generations=generations,
-        mutation_rate=mutation_rate
-    )
+        # Adjust these parameters as needed
+        population_size = 5
+        generations = 15
+        mutation_rate = 0.05
 
-    print(f"\nBest solution:")
-    print(f"Gene: {best_gene}")
-    print(f"Accuracy: {best_accuracy:.4f}")
+        best_gene, best_accuracy, results = genetic_algorithm(
+            model=model,
+            tokenizer=tokenizer,
+            population_size=population_size,
+            gene_length=num_layers,
+            generations=generations,
+            mutation_rate=mutation_rate,
+            model_name=llm_name,
+            initial_accuracy=initial_accuracy,
+            tasks=tasks
+        )
+
+    print("\nApplying best solution and evaluating...")
     print(f"Layers kept: {sum(best_gene)}/{num_layers} ({sum(best_gene)/num_layers*100:.1f}%)")
-
     final_model = remove_layers(model, best_gene)
-    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer)
-    print(f"Final model accuracy: {final_accuracy:.4f}")
-    print(f"Layers removed: {num_layers - sum(best_gene)}")
+    if False:
+        final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, None)
+        print(f"Final model accuracy: {final_accuracy:.4f}")
+        print(f"Layers removed: {num_layers - sum(best_gene)}")
+    
     prompt = "Answer correctly. Which one is heavier? A kilogram of steel or a kilogram of feathers? Answer: "
-    print("After removing layers:")
+    print("\nAfter removing layers:")
     print(generate_completion(final_model.to('cuda'), tokenizer, prompt))
 
-    # plotting
-    generations = [r["generation"] for r in results]
-    accuracies = [r["best_accuracy"] for r in results]
+    print("\nFinetuning model...")
+    finetune(final_model.to('cuda'), tokenizer, 42)
+    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer)
+    print("Accuracy after finetune:", final_accuracy)
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(generations, accuracies)
-    plt.title("Best Accuracy Over Generations")
-    plt.xlabel("Generation")
-    plt.ylabel("Accuracy")
-    plt.grid(True)
-    plt.savefig("accuracy_over_time.png")
-    plt.show()
+    print("\nTesting with prompt after finetuning:")
+    print(generate_completion(final_model.to('cuda'), tokenizer, prompt))
 
 if __name__ == "__main__":
     main()

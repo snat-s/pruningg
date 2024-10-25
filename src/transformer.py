@@ -10,6 +10,7 @@ import torch
 import os
 import dotenv
 from utils import apply_mapping
+import wandb
 
 dotenv.load_dotenv()
 
@@ -18,8 +19,24 @@ def finetune(model, tokenizer, random_seed):
     Finetune the model on the SlimOrca dataset. The choice of parameters generally follow 
     those from Gromov et al. The Unreasonable Ineffectiveness of the Deeper Layers (2024).
     """
+    wandb.init(
+        project="model_lobotomization",
+        config={
+            "learning_rate": 3e-4,
+            "batch_size": 1,
+            "gradient_accumulation_steps": 8,
+            "max_steps": 10000,
+            "lora_r": 2,
+            "lora_alpha": 2,
+            "lora_dropout": 0.05,
+            "random_seed": random_seed,
+            "max_seq_length": 512/2,
+        }
+    )
+    model.gradient_checkpointing_enable()  # Trades computation for memory
+    model.enable_input_require_grads()
     dataset = load_dataset("Open-Orca/SlimOrca")
-    dataset = dataset["train"].select(range(1000))
+    dataset = dataset["train"].take(10_000)
 
     def tokenize(examples):
         messages = examples["conversations"]
@@ -30,17 +47,20 @@ def finetune(model, tokenizer, random_seed):
 
     sft_config = SFTConfig(
         dataset_text_field="text",
-        max_seq_length=1024,
+        max_seq_length=512/4,
         learning_rate=3e-4,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=1, # increase this if vram allows
+        gradient_accumulation_steps=8,
         warmup_steps=0,
         max_steps=100,
         save_strategy="steps",
-        save_steps=10,
+        save_steps=25,
         output_dir="output",
         logging_steps=1,
         logging_strategy="steps",
+        #optim="adamw_torch_fused",  # Use fused optimizer if available
+        #fp16=True,
     )
 
     peft_config = LoraConfig(
@@ -48,7 +68,8 @@ def finetune(model, tokenizer, random_seed):
         r=2,
         lora_alpha=2,
         lora_dropout=0.05,
-        target_modules=["gate_proj", "down_proj", "up_proj"]
+        target_modules=["gate_proj", "down_proj", "up_proj"],
+        inference_mode=False,
         )
 
     trainer = SFTTrainer(
@@ -59,8 +80,13 @@ def finetune(model, tokenizer, random_seed):
         tokenizer=tokenizer,
     )
 
-    trainer.train()
 
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    trainer.train()
+    trainer.save_model()
+    wandb.finish()
     pass
 
 def construct_ordered_model(model, order: List[int], use_cache: bool = True):
