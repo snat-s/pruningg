@@ -18,15 +18,8 @@ def print_eval_results(results):
         print(f"Accuracy: {accuracy:.3f}")
         print(f"Accuracy StdErr: ±{std_err:.3f}")
 
-def evaluate_model(model, tokenizer, limit=10):
+def evaluate_model(model, tokenizer, task_names=["tinyMMLU"], limit=10):
     wrapped_model = lm_eval.models.huggingface.HFLM(pretrained=model, tokenizer=tokenizer)
-    task_names = [
-                #"hellaswag",
-        #"mmlu_stem",
-        #"mmlu_high_school_mathematics",
-        "tinyMMLU"
-        #"cola"
-    ]
     
     results = lm_eval.simple_evaluate(
         model=wrapped_model,
@@ -36,11 +29,9 @@ def evaluate_model(model, tokenizer, limit=10):
         #bootstrap_iters=100,
     )
     
-    #print_eval_results(results)
     task_name = task_names[0]
     accuracy = results['results'][task_name]['acc,none']
     return accuracy
-    #return results
 
 if __name__ == "__main__":
     model_name = "Qwen/Qwen2.5-0.5B"#"meta-llama/Llama-3.2-1B" 

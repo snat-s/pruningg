@@ -12,17 +12,15 @@ import os
 import copy
 import gc
 import json
-#from finetune import finetune
 from transformer import finetune
 from evaluate_model import evaluate_model
 
-# Modify to bias towards the percentage of initial layers you want, by default it's 70%
-#def create_individual(gene_length: int) -> List[int]:
-#    return [1 if random.random() < 0.7 else 0 for _ in range(gene_length)]
 def create_individual(gene_length: int) -> List[int]:
     """
-    Creates an individual with bias towards keeping outer layers and being more selective with middle layers.
-    Uses a quadratic function to create a probability distribution that's higher at the edges and lower in the middle.
+    Creates an individual with bias towards keeping outer layers and being more
+    selective with middle layers. Uses a quadratic function to create a
+    probability distribution that's higher at the edges and lower in the
+    middle.
     """
     individual = []
     
@@ -44,9 +42,9 @@ def create_individual(gene_length: int) -> List[int]:
         individual.append(1 if random.random() < prob else 0)
     
     # Force keeping first and last layers (optional, but often beneficial)
-    if gene_length > 2:  # Only if we have more than 2 layers
-        individual[0] = 1  # Keep first layer
-        individual[-1] = 1  # Keep last layer
+    #if gene_length > 2:  # Only if we have more than 2 layers
+    #    individual[0] = 1  # Keep first layer
+    #    individual[-1] = 1  # Keep last layer
     
     return individual
 
@@ -101,7 +99,7 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
     results = {
         "model_name": model_name,
         "initial_accuracy": initial_accuracy,
-        tasks: tasks,
+        "tasks": tasks,
         "final_accuracy": None,  # Will be updated at the end
         "generations": [],
         "hyperparameters": {
@@ -121,7 +119,7 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
             "individuals": []
         }
 
-        for individual in population:
+        for i, individual in enumerate(population):
             torch.cuda.empty_cache()
             gc.collect()
 
@@ -135,11 +133,12 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
                 "active_layers": active_layers,
                 "total_layers": gene_length,
                 "active_percentage": round(active_layers/gene_length * 100, 2),
-                "accuracy": round(accuracy, 4)
+                "accuracy": round(accuracy, 4),
+                "individual": individual,
             }
             generation_results["individuals"].append(individual_result)
             
-            print(f"Model with {active_layers}/{gene_length} layers ({active_layers/gene_length*100:.1f}%): Accuracy = {accuracy:.4f}")
+            print(f"{i}th model with {active_layers}/{gene_length} layers ({active_layers/gene_length*100:.1f}%): Accuracy = {accuracy:.4f}")
 
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
@@ -157,11 +156,9 @@ def genetic_algorithm(model, tokenizer, population_size: int, gene_length: int, 
         
         results["generations"].append(generation_results)
         
-        # Save results with nice formatting after each generation
         with open("ga_results.json", "w") as f:
             json.dump(results, f, indent=2)
 
-    # Update final accuracy in results
     results["final_accuracy"] = round(best_accuracy, 4)
     with open("ga_results.json", "w") as f:
         json.dump(results, f, indent=2)
@@ -187,7 +184,7 @@ def plot_probability_distribution(gene_length: int):
 
 def main():
     tasks = ["tinyMMLU"]
-    llm_name = "meta-llama/Llama-3.2-1B" #"Qwen/Qwen2-0.5B-Instruct"
+    llm_name = "NousResearch/Hermes-3-Llama-3.1-8B" #"meta-llama/Llama-3.2-1B" #"Qwen/Qwen2-0.5B-Instruct"
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name, token=os.environ["HF_AUTH_TOKEN"])
@@ -242,23 +239,20 @@ def main():
 
     print("\nApplying best solution and evaluating...")
     print(f"Layers kept: {sum(best_gene)}/{num_layers} ({sum(best_gene)/num_layers*100:.1f}%)")
-    final_model = remove_layers(model, best_gene)
-    if False:
-        final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, None)
-        print(f"Final model accuracy: {final_accuracy:.4f}")
-        print(f"Layers removed: {num_layers - sum(best_gene)}")
-    
-    prompt = "Answer correctly. Which one is heavier? A kilogram of steel or a kilogram of feathers? Answer: "
-    print("\nAfter removing layers:")
-    print(generate_completion(final_model.to('cuda'), tokenizer, prompt))
+    final_model = remove_layers(model.to('cpu'), best_gene)
 
+    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, None)
+    print(f"Final model accuracy: {final_accuracy:.4f}")
+    print(f"Layers removed: {num_layers - sum(best_gene)}")
+    
     print("\nFinetuning model...")
     finetune(final_model.to('cuda'), tokenizer, 42)
-    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer)
+    final_accuracy = evaluate_model(final_model, tokenizer)
     print("Accuracy after finetune:", final_accuracy)
 
-    print("\nTesting with prompt after finetuning:")
-    print(generate_completion(final_model.to('cuda'), tokenizer, prompt))
+    results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
+    with open("ga_results.json", "w") as f:
+        json.dump(results, f, indent=2)
 
 if __name__ == "__main__":
     main()
