@@ -28,17 +28,23 @@ def evaluate_model(model, tokenizer, task_names=["tinyMMLU"], limit=10):
         #limit=limit,
         #bootstrap_iters=100,
     )
+    accuracies = {}
+    for task_name in task_names:
+        accuracies[task_name] = results['results'][task_name]['acc_norm,none']
+
+    avg_accuracy = sum(accuracies.values()) / len(accuracies)
+    for task, acc in accuracies.items():
+        print(f"{task}: {acc:.4f}")
+    print(f"\nAverage accuracy across all tasks: {avg_accuracy:.4f}")
     
-    task_name = task_names[0]
-    accuracy = results['results'][task_name]['acc,none']
-    return accuracy
+    return avg_accuracy
 
 if __name__ == "__main__":
     model_name = "Qwen/Qwen2.5-0.5B"#"meta-llama/Llama-3.2-1B" 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.float16,  # Use fp16 for efficiency
-        device_map="auto"  # Automatically handle model placement
+        torch_dtype=torch.float16,
+        device_map="auto"
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     acc = evaluate_model(model, tokenizer)

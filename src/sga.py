@@ -12,7 +12,8 @@ import os
 import copy
 import gc
 import json
-from transformer import finetune
+import argparse
+from finetune import finetune
 from evaluate_model import evaluate_model
 
 def create_individual(gene_length: int) -> List[int]:
@@ -182,16 +183,15 @@ def plot_probability_distribution(gene_length: int):
     plt.savefig('layer_probability_distribution.png')
     plt.close()
 
-def main():
+def main(llm_name="Qwen/Qwen2-0.5B-Instruct"):
     tasks = ["tinyMMLU"]
-    llm_name = "NousResearch/Hermes-3-Llama-3.1-8B" #"meta-llama/Llama-3.2-1B" #"Qwen/Qwen2-0.5B-Instruct"
     device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(llm_name, token=os.environ["HF_AUTH_TOKEN"])
     tokenizer.pad_token = tokenizer.eos_token
+    print(llm_name)
     model = AutoModelForCausalLM.from_pretrained(llm_name, torch_dtype=torch.bfloat16, trust_remote_code=True, token=os.environ["HF_AUTH_TOKEN"])
     model.to(device)
-    model.config.pad_token_id = tokenizer.eos_token_id
 
     num_layers = len(model.model.layers)
     print(f"Model has {num_layers} layers")
@@ -216,7 +216,7 @@ def main():
     else:
         print("No existing results found, running genetic algorithm...")
         print("Initial model evaluation:")
-        initial_accuracy = evaluate_model(model, tokenizer, None)
+        initial_accuracy = evaluate_model(model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
         model.to('cpu')
         print(f"Initial accuracy: {initial_accuracy:.4f}")
 
@@ -241,18 +241,23 @@ def main():
     print(f"Layers kept: {sum(best_gene)}/{num_layers} ({sum(best_gene)/num_layers*100:.1f}%)")
     final_model = remove_layers(model.to('cpu'), best_gene)
 
-    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, None)
+    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
     print(f"Final model accuracy: {final_accuracy:.4f}")
     print(f"Layers removed: {num_layers - sum(best_gene)}")
     
-    print("\nFinetuning model...")
-    finetune(final_model.to('cuda'), tokenizer, 42)
-    final_accuracy = evaluate_model(final_model, tokenizer)
-    print("Accuracy after finetune:", final_accuracy)
+    #print("\nFinetuning model...")
+    #finetune(final_model.to('cuda'), tokenizer, 42)
+    #final_accuracy = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
+    #print("Accuracy after finetune:", final_accuracy)
 
-    results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
-    with open("ga_results.json", "w") as f:
-        json.dump(results, f, indent=2)
+    #results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
+    #with open("ga_results.json", "w") as f:
+    #    json.dump(results, f, indent=2)
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Run genetic algorithm for model layer optimization')
+    parser.add_argument('--model', type=str, required=True,
+                      help='Name or path of the model (e.g., "meta-llama/Llama-3.2-1B")')
+    args = parser.parse_args()
+    main(args.model)
+

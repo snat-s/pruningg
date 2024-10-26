@@ -1,117 +1,129 @@
-from transformers import AutoTokenizer
-from datasets import load_dataset
-import torch
-import os
-import dotenv
-from utils import apply_mapping
+from unsloth import FastLanguageModel, is_bfloat16_supported
+from unsloth.chat_templates import get_chat_template
+from unsloth.chat_templates import standardize_sharegpt
+from trl import SFTTrainer
+from transformers import TrainingArguments
 import wandb
-from unsloth import FastLanguageModel
-import torch.nn as nn
-from accelerate import Accelerator
-dotenv.load_dotenv()
+import torch
+from datasets import load_dataset
 
 def finetune(model, tokenizer, random_seed):
     """
-    Finetune a pre-pruned model using unsloth optimizations.
-    Takes the actual model instance instead of loading from scratch.
+    Finetune a pre-pruned model using unsloth optimizations for Llama 3.2.
     """
     wandb.init(
         project="model_lobotomization",
         config={
-            "learning_rate": 3e-4,
-            "batch_size": 1,
+            "learning_rate": 2e-4,
+            "batch_size": 2,
             "gradient_accumulation_steps": 4,
-            "max_steps": 10000,
-            "lora_r": 2,
-            "lora_alpha": 2,
-            "lora_dropout": 0.05,
+            "max_steps": 60,
+            "lora_r": 16,
+            "lora_alpha": 16,
+            "lora_dropout": 0,
             "random_seed": random_seed,
-            "max_seq_length": 1024,
+            #"max_seq_length": 2048,
         }
     )
 
-    # Load and prepare the dataset
+    # Load and prepare SlimOrca dataset
     dataset = load_dataset("Open-Orca/SlimOrca")
-    dataset = dataset["train"].take(10_000)
+    dataset = dataset["train"].select(range(10_000))
 
-    def tokenize(examples):
-        messages = examples["conversations"]
-        text = [tokenizer.apply_chat_template(apply_mapping(m), tokenize=False, add_generation_prompt=False) for m in messages]
-        return {"text": text}
-
-    dataset = dataset.map(tokenize, batched=True, batch_size=16).shuffle(seed=random_seed)
-
-    # Apply unsloth's training optimizations to existing model
-    model = FastLanguageModel.prepare_model(
-        model,
-        max_seq_length=1024,
-        dtype=torch.bfloat16,
-        device="auto",
-        use_gradient_checkpointing=True
-    )
-
-    # Configure LoRA for the existing model
-    lora_config = FastLanguageModel.get_peft_config(
-        r=2,
-        target_modules=["gate_proj", "down_proj", "up_proj"],
-        lora_alpha=2,
-        lora_dropout=0.05,
-        bias="none",
-        use_gradient_checkpointing=True,
-        random_state=random_seed,
+    # Setup chat template for Llama 3.1/3.2 format
+    tokenizer = get_chat_template(
+        tokenizer,
+        chat_template = "llama-3.1",
     )
     
+    # Set padding token if not set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = tokenizer.eos_token_id
+
+    def apply_mapping(conversation):
+        """Convert SlimOrca format to standard chat format"""
+        return [
+            {
+                "role": "system" if msg["from"] == "system" else 
+                        "assistant" if msg["from"] == "gpt" else 
+                        "user" if msg["from"] == "human" else msg["from"],
+                "content": msg["value"]
+            }
+            for msg in conversation
+        ]
+
+    def formatting_prompts_func(examples):
+        convos = examples["conversations"]
+        texts = [tokenizer.apply_chat_template(apply_mapping(convo), 
+                                             tokenize=False, 
+                                             add_generation_prompt=False) 
+                for convo in convos]
+        return {"text": texts}
+
+    # Process dataset while keeping track of original columns
+    original_columns = dataset.column_names
+    dataset = dataset.map(
+        formatting_prompts_func,
+        batched=True,
+        batch_size=16,
+        remove_columns=original_columns
+    ).shuffle(seed=random_seed)
+
+    # Add LoRA adapters
     model = FastLanguageModel.get_peft_model(
         model,
-        peft_config=lora_config,
+        r=16,
+        target_modules=[
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+        ],
+        lora_alpha=16,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing="unsloth",
+        random_state=random_seed,
     )
 
-    # Initialize Accelerator for distributed training
-    accelerator = Accelerator(
-        gradient_accumulation_steps=4,
-        mixed_precision="bf16"
-    )
-
-    training_args = {
-        "output_dir": "output",
-        "num_train_epochs": 1,
-        "per_device_train_batch_size": 1,
-        "gradient_accumulation_steps": 4,
-        "learning_rate": 3e-4,
-        "lr_scheduler_type": "cosine",
-        "warmup_steps": 0,
-        "max_steps": 300,
-        "logging_steps": 1,
-        "save_steps": 25,
-        "save_strategy": "steps",
-        "bf16": True,
-        "optim": "adamw_hf",
-        "seed": random_seed,
-    }
-
-    trainer = FastLanguageModel.get_trainer(
+    # Setup the trainer
+    trainer = SFTTrainer(
         model=model,
-        train_dataset=dataset,
-        args=training_args,
         tokenizer=tokenizer,
-        max_seq_length=1024,
+        train_dataset=dataset,
         dataset_text_field="text",
-        packing=True,
-        use_flash_attention=True,
+        #max_seq_length=2048,
+        dataset_num_proc=2,
+        packing=False,
+        args=TrainingArguments(
+            per_device_train_batch_size=2,
+            gradient_accumulation_steps=4,
+            warmup_steps=5,
+            max_steps=60,
+            learning_rate=2e-4,
+            fp16=not is_bfloat16_supported(),
+            bf16=is_bfloat16_supported(),
+            logging_steps=1,
+            optim="adamw_8bit",
+            weight_decay=0.01,
+            lr_scheduler_type="linear",
+            seed=random_seed,
+            output_dir="outputs",
+            report_to="none",
+        ),
     )
 
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-
+    # Train the model
     trainer.train()
-    trainer.save_model()
+    
+    # Save everything
+    trainer.save_model("outputs/final_model")
     
     torch.save({
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': trainer.optimizer.state_dict(),
-        'training_args': training_args,
-    }, os.path.join(training_args["output_dir"], "training_state.pt"))
+        'training_args': trainer.args,
+    }, "outputs/training_state.pt")
     
     wandb.finish()
     
-    return model  
+    return model
