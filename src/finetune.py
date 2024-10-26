@@ -12,16 +12,17 @@ import dotenv
 import wandb
 from utils import apply_mapping
 
-def tokenize(examples):
-    messages = examples["conversations"]
-    text = [tokenizer.apply_chat_template(apply_mapping(m), tokenize=False, add_generation_prompt=False) for m in messages]
-    return {"text": text}
 
 def finetune(model, tokenizer, random_seed):
     """
     Finetune the model on the SlimOrca dataset. The choice of parameters generally follow 
     those from Gromov et al. The Unreasonable Ineffectiveness of the Deeper Layers (2024).
     """
+
+    def tokenize(examples):
+        messages = examples["conversations"]
+        text = [tokenizer.apply_chat_template(apply_mapping(m), tokenize=False, add_generation_prompt=False) for m in messages]
+        return {"text": text}
     wandb.init(
             project="model_lobotomization",
     )
@@ -38,7 +39,7 @@ def finetune(model, tokenizer, random_seed):
             lr_scheduler_type="cosine",
             per_device_train_batch_size=1, # increase this if vram allows
             warmup_steps=0,
-            #max_steps=100,
+            max_steps=200,
             save_strategy="steps",
             save_steps=25,
             output_dir="output",
