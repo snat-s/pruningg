@@ -221,9 +221,9 @@ def main(llm_name="Qwen/Qwen2-0.5B-Instruct"):
         print(f"Initial accuracy: {initial_accuracy:.4f}")
 
         # Adjust these parameters as needed
-        population_size = 5
-        generations = 15
-        mutation_rate = 0.05
+        population_size = 10
+        generations = 100
+        mutation_rate = 0.1
 
         best_gene, best_accuracy, results = genetic_algorithm(
             model=model,
@@ -248,8 +248,8 @@ def main(llm_name="Qwen/Qwen2-0.5B-Instruct"):
     
     print("\nFinetuning model...")
     finetune(final_model, tokenizer, 42)
-    final_accuracy = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
-    print("Accuracy after finetune:", final_accuracy)
+    final_accuracy_after_finetune = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
+    print("Accuracy after finetune:", final_accuracy_after_finetune)
 
     results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
     with open("ga_results.json", "w") as f:
