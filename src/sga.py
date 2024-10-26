@@ -13,7 +13,7 @@ import copy
 import gc
 import json
 import argparse
-#from finetune import finetune
+from finetune import finetune
 from evaluate_model import evaluate_model
 
 def create_individual(gene_length: int) -> List[int]:
@@ -241,18 +241,19 @@ def main(llm_name="Qwen/Qwen2-0.5B-Instruct"):
     print(f"Layers kept: {sum(best_gene)}/{num_layers} ({sum(best_gene)/num_layers*100:.1f}%)")
     final_model = remove_layers(model.to('cpu'), best_gene)
 
-    final_accuracy = evaluate_model(final_model.to('cuda'), tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
+    final_model.to(device)
+    final_accuracy = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
     print(f"Final model accuracy: {final_accuracy:.4f}")
     print(f"Layers removed: {num_layers - sum(best_gene)}")
     
-    #print("\nFinetuning model...")
-    #finetune(final_model.to('cuda'), tokenizer, 42)
-    #final_accuracy = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
-    #print("Accuracy after finetune:", final_accuracy)
+    print("\nFinetuning model...")
+    finetune(final_model, tokenizer, 42)
+    final_accuracy = evaluate_model(final_model, tokenizer, task_names=["tinyMMLU", "tinyHellaswag"])
+    print("Accuracy after finetune:", final_accuracy)
 
-    #results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
-    #with open("ga_results.json", "w") as f:
-    #    json.dump(results, f, indent=2)
+    results["accuracy_after_finetune"] = round(float(final_accuracy_after_finetune), 4)
+    with open("ga_results.json", "w") as f:
+        json.dump(results, f, indent=2)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run genetic algorithm for model layer optimization')
