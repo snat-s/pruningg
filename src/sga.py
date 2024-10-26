@@ -13,7 +13,7 @@ import copy
 import gc
 import json
 import argparse
-from finetune import finetune
+#from finetune import finetune
 from evaluate_model import evaluate_model
 
 def create_individual(gene_length: int) -> List[int]:
