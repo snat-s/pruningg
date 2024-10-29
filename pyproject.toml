@@ -13,6 +13,14 @@ torch = "^2.4.0"
 python-dotenv = "^1.0.1"
 peft = "^0.12.0"
 datasets = "^2.21.0"
+wandb = "^0.18.3"
+evaluate = "^0.4.3"
+scikit-learn = "^1.5.2"
+deepeval = "^1.3.5"
+matplotlib = "^3.9.2"
+seaborn = "^0.13.2"
+tinybenchmarks = {git = "https://github.com/felipemaiapolo/tinyBenchmarks.git"}
+lm-eval = "^0.4.5"
 
 
 [build-system]
