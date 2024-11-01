@@ -43,9 +43,9 @@ def create_individual(gene_length: int) -> List[int]:
         individual.append(1 if random.random() < prob else 0)
     
     # Force keeping first and last layers (optional, but often beneficial)
-    #if gene_length > 2:  # Only if we have more than 2 layers
-    #    individual[0] = 1  # Keep first layer
-    #    individual[-1] = 1  # Keep last layer
+    if gene_length > 2:  # Only if we have more than 2 layers
+        individual[0] = 1  # Keep first layer
+        individual[-1] = 1  # Keep last layer
     
     return individual
 

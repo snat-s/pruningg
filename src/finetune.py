@@ -13,7 +13,7 @@ import wandb
 from utils import apply_mapping
 
 
-def finetune(model, tokenizer, random_seed):
+def finetune(model, tokenizer, random_seed=42):
     """
     Finetune the model on the SlimOrca dataset. The choice of parameters generally follow 
     those from Gromov et al. The Unreasonable Ineffectiveness of the Deeper Layers (2024).
