@@ -55,6 +55,23 @@ def get_neighbor(state: List[int]) -> List[int]:
     neighbor[position] = 1 - neighbor[position]
     return neighbor
 
+def get_neighbor_multi(state: List[int], num_flips: int = 1, min_flips: int = 1) -> List[int]:
+    assert min_flips <= num_flips, "min_flips must be <= num_flips"
+    assert min_flips >= 1, "min_flips must be at least 1"
+    assert num_flips < len(state), "num_flips must be less than state length"
+    
+    neighbor = state.copy()
+    gene_length = len(state)
+    
+    actual_flips = random.randint(min_flips, num_flips)
+    valid_positions = list(range(1, gene_length - 1)) if gene_length > 2 else list(range(gene_length))
+    positions_to_flip = random.sample(valid_positions, min(actual_flips, len(valid_positions)))
+    
+    for position in positions_to_flip:
+        neighbor[position] = 1 - neighbor[position]
+    
+    return neighbor
+
 def get_biased_neighbor(state: List[int]) -> List[int]:
     """
     Gets a neighbor state by flipping one bit, with bias towards keeping outer
@@ -165,7 +182,7 @@ def hill_climbing_with_restarts(
         
         # Hill Climbing
         for step in range(steps_per_restart):
-            neighbor = get_biased_neighbor(current_state)
+            neighbor = get_neighbor_multi(current_state, 3)
             pruned_model = remove_layers(model, neighbor)
             neighbor_accuracy = evaluate_model_fn(pruned_model.to('cuda'), tokenizer)
             pruned_model.to('cpu')
@@ -184,7 +201,7 @@ def hill_climbing_with_restarts(
             step_stats = {
                 "step": step + 1,
                 "accuracy": current_accuracy,
-                "state": current_state.copy(),
+                "state": neighbor.copy(),
                 "total_active_layers": sum(current_state),
                 "compression_ratio": round(sum(current_state) / num_layers, 2)
             }
