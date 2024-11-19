@@ -18,15 +18,26 @@ def print_eval_results(results):
         print(f"Accuracy: {accuracy:.3f}")
         print(f"Accuracy StdErr: ±{std_err:.3f}")
 
+def list_evaluate_model(model, tokenizer, task_names):
+    "eval on a list of tasks instead of a single task and return everything"
+    wrapped_model = lm_eval.models.huggingface.HFLM(pretrained=model, tokenizer=tokenizer)
+    results = lm_eval.simple_evaluate(
+        model=wrapped_model,
+        tasks=task_names,
+    )
+    accuracies = {}
+
+    for task_name in task_names:
+        accuracies[task_name] = results['results'][task_name]
+
+    return accuracies
+
 def evaluate_model(model, tokenizer, task_names=["tinyMMLU"], limit=10):
     wrapped_model = lm_eval.models.huggingface.HFLM(pretrained=model, tokenizer=tokenizer)
     
     results = lm_eval.simple_evaluate(
         model=wrapped_model,
         tasks=task_names,
-        #num_fewshot=5,  
-        #limit=limit,
-        #bootstrap_iters=100,
     )
     accuracies = {}
     for task_name in task_names:
