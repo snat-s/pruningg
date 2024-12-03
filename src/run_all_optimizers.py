@@ -162,9 +162,7 @@ def use_metaheuristic(
 
 def main(model_name: str):
     task_names = [
-        "tinyMMLU", "tinyHellaswag", "tinyTruthfulQA",
-        "tinyBenchmarks/tinyWinogrande",
-        "tinyBenchmarks/tinyAI2_arc", "tinyBenchmarks/tinyGSM8k"
+            'tinyArc', 'tinyGSM8k', 'tinyHellaswag', 'tinyMMLU', 'tinyTruthfulQA', 'tinyWinogrande'
     ]
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
