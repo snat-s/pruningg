@@ -18,3 +18,6 @@ To run the layer selection and subsequent fine-tuning, run:
 ```bash
 poetry run python src/sga.py
 ```
+
+We have implemented three different algorithms for pruning.
+Hill Climbing, Simmulated Annealintg and Simple Genetic Algorithms.
