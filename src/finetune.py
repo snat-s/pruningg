@@ -23,12 +23,14 @@ def finetune(model, tokenizer, random_seed=42):
         messages = examples["conversations"]
         text = [tokenizer.apply_chat_template(apply_mapping(m), tokenize=False, add_generation_prompt=False) for m in messages]
         return {"text": text}
+    wandb.login(key=os.getenv["WANDB"])
     wandb.init(
             project="model_lobotomization",
+            name="Llama3.370B the big boi"
     )
 
     dataset = load_dataset("Open-Orca/SlimOrca")
-    dataset = dataset["train"].select(range(1000))
+    dataset = dataset["train"].select(range(2000))
 
     dataset = dataset.map(tokenize, batched=True, batch_size=16).shuffle(seed=random_seed)
 
