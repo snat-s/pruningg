@@ -21,7 +21,7 @@ def create_initial_state(gene_length: int) -> List[int]:
     
     # Parameters to control the shape of the probability curve
     edge_prob = 0.9  # Probability of keeping edge layers
-    middle_prob = 0.6  # Probability of keeping middle layers
+    middle_prob = 0.7  # Probability of keeping middle layers
     
     for i in range(gene_length):
         # Convert position to range [-1, 1] where 0 is the middle
@@ -225,9 +225,9 @@ def main(llm_name: str, output_file: Path = Path("sa_results.json")):
         model_name=llm_name,
         baseline_accuracy=baseline_accuracy,
         initial_temp=1.0,
-        min_temp=0.01,
+        min_temp=0.05,
         cooling_rate=0.95,
-        steps_per_temp=5,
+        steps_per_temp=2,
         output_file=output_file
     )
     
